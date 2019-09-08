@@ -2,3 +2,5 @@ __pycache__/
 log/
 cache/
 .vscode/
+config.yaml
+courses.csv

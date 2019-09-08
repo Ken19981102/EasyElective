@@ -4,3 +4,4 @@ requests
 simplejson
 sklearn
 tqdm
+pyyaml
