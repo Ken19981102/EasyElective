@@ -3,4 +3,4 @@ log/
 cache/
 .vscode/
 config.yaml
-courses.csv
+targets.csv
