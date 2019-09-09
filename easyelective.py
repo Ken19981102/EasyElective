@@ -99,11 +99,10 @@ def get_elective_session(username, password):
     try:
         resp = session.get(login_url, params={"token": token}, timeout=5)
         if resp.status_code != 200:
-            raise AuthenticationError("Failed to get elective session")
+            raise AuthenticationError
         logger.debug("Successfully got elective session")
         return session
     except requests.exceptions.RequestException as e:
-        logger.warning("Network error while attempting to get elective session")
         raise NetworkError from e
 
 
@@ -121,7 +120,7 @@ def get_courses(session):
     try:
         resp = session.get(url_supply_cancel, timeout=5)
     except requests.exceptions.RequestException as e:
-        logger.warning("Network error while trying to get course list")
+        logger.debug("Network error while trying to get course list")
         raise NetworkError from e
 
     try:
@@ -143,7 +142,7 @@ def get_courses(session):
             )
         return courses
     except ValueError as e:
-        logger.warning("Failed to parse course list", stack_info=True)
+        logger.info("Failed to parse course list", stack_info=True)
         raise IllegalOperationError(session_expired=True) from e
 
 
@@ -187,7 +186,7 @@ def elect(session, course):
     if "成功" in msg:
         logger.info(f"Successfully elected {course.name}")
     else:
-        logger.warning(f"Failed to elect {course.name}: {msg}")
+        logger.info(f"Failed to elect {course.name}: {msg}")
         raise IllegalOperationError
 
 
@@ -199,7 +198,6 @@ def main():
         password = config["password"]
 
     # Load target courses
-    # TODO: restore wildcard course selection
     with open("targets.csv", newline="") as courses_file:
         csv_reader = csv.DictReader(courses_file)
         targets = list(csv_reader)
@@ -211,11 +209,13 @@ def main():
             # Login into elective
             try:
                 sess = get_elective_session(username, password)
+                session_expired = False
             except AuthenticationError:
-                logger.error("Authentication error. Please check your student ID and password")
+                logger.critical("Authentication error. Please check your student ID and password")
                 sys.exit(1)
             except NetworkError:
                 # Retry later
+                logger.info("Failed to get elective session. Retrying...")
                 sleep(10)
         logger.info("Got elective session")
 
