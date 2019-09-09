@@ -1,5 +1,4 @@
 import sys
-import logging
 import yaml
 import csv
 import re
@@ -9,6 +8,7 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+from loguru import logger
 
 from captcha import recognize_captcha
 
@@ -47,15 +47,11 @@ Course = namedtuple(
     "Course", ["name", "classID", "college", "max_slots", "used_slots", "elect_address"]
 )
 
-logger = logging.getLogger(__file__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(asctime)s: %(message)s",
-    handlers = [
-        logging.StreamHandler(),
-        logging.FileHandler(filename='log.txt'),
-    ],
-)
+# Setup logger
+logger.remove()
+logger.add(sys.stderr, level="INFO")
+logger.add('info.log', level="INFO")
+logger.add('debug.log', level="DEBUG")
 
 
 def get_iaaa_token(appid, username, password, redir):
@@ -197,13 +193,14 @@ def elect(session, course):
         raise IllegalOperationError
 
 
+@logger.catch
 def main():
+    logger.info("Easy elective, version 0.1")
     # Load config
     with open("config.yaml") as config_file:
         config = yaml.load(config_file, Loader=yaml.BaseLoader)
         username = config["studentID"]
         password = config["password"]
-
     # Load target courses
     with open("targets.csv", newline="") as courses_file:
         csv_reader = csv.DictReader(courses_file)
@@ -216,6 +213,7 @@ def main():
             # Login into elective
             try:
                 sess = get_elective_session(username, password)
+                logger.info("Got elective session")
                 session_expired = False
             except AuthenticationError:
                 logger.critical(
@@ -226,8 +224,8 @@ def main():
                 # Retry later
                 logger.info("Failed to get elective session. Retrying...")
                 sleep(10)
-        logger.info("Got elective session")
 
+        logger.info("Refreshing course list")
         try:
             courses = get_courses(sess)
             for target in targets:
