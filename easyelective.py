@@ -50,8 +50,8 @@ Course = namedtuple(
 # Setup logger
 logger.remove()
 logger.add(sys.stderr, level="INFO")
-logger.add('info.log', level="INFO")
-logger.add('debug.log', level="DEBUG")
+logger.add("info.log", level="INFO")
+logger.add("debug.log", level="DEBUG")
 
 
 def get_iaaa_token(appid, username, password, redir):
@@ -225,7 +225,7 @@ def main():
                 logger.info("Failed to get elective session. Retrying...")
                 sleep(10)
 
-        logger.info("Refreshing course list")
+        logger.debug("Refreshing course list")
         try:
             courses = get_courses(sess)
             for target in targets:
@@ -242,7 +242,7 @@ def main():
                 # Warn if no course correspond to target
                 if not search_result:
                     logger.warning(
-                        f"{target['courseName']} not found in election plan."
+                        f"Target {target['courseName']} not found in election plan."
                     )
                     targets.remove(target)
 
@@ -259,8 +259,10 @@ def main():
                 logger.warning("Illegal Operation detected, session expired")
                 session_expired = True
             else:
-                # TODO: clarify what happened
-                logger.warning("Illegal Operation detected")
+                logger.warning(
+                    f"Illegal Operation detected. Ignoring target {target['courseName']}"
+                )
+                targets.remove(target)
         except NetworkError:
             # Retry
             logger.warning("Network error detected, retrying...")
