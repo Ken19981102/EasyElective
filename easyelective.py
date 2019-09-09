@@ -31,15 +31,16 @@ class NetworkError(EasyElectiveException):
     pass
 
 
+class SessionExpiredError(EasyElectiveException):
+    """Not logged in, caught cheating, etc"""
+
+    pass
+
+
 class IllegalOperationError(EasyElectiveException):
-    """Not logged in, caught cheating, no such course, etc"""
+    """Course cannot be elected, because of e.g. conflict"""
 
-    session_expired = False
-    course_should_be_ignored = False
-
-    def __init__(self, session_expired=False, course_should_be_ignored=False):
-        self.session_expired = session_expired
-        self.course_should_be_ignored = course_should_be_ignored
+    pass
 
 
 # Data structure for a course
@@ -146,7 +147,7 @@ def get_courses(session):
         return courses
     except (ValueError, AttributeError) as e:
         logger.info("Failed to parse course list", stack_info=True)
-        raise IllegalOperationError(session_expired=True) from e
+        raise SessionExpiredError from e
 
 
 def solve_captcha(session):
@@ -169,7 +170,7 @@ def solve_captcha(session):
         if resp.json()["valid"] != "2":
             solve_captcha(session)
     except ValueError:
-        raise IllegalOperationError(session_expired=True)
+        raise SessionExpiredError
 
 
 def elect(session, course):
@@ -183,7 +184,7 @@ def elect(session, course):
         soup = BeautifulSoup(resp.text, features="html.parser")
         msg = soup.find(id="msgTips").text
     except (KeyError, AttributeError) as e:
-        raise IllegalOperationError(session_expired=True) from e
+        raise SessionExpiredError from e
 
     # TODO: detect failure precisely
     if "成功" in msg:
@@ -254,17 +255,16 @@ def main():
                         )
                         elect(sess, course)
                         targets.remove(target)
-        except IllegalOperationError as e:
-            if e.session_expired:
-                logger.warning(
-                    "Illegal Operation detected, session has expired. Retrying..."
-                )
-                session_expired = True
-            else:
-                logger.warning(
-                    f"Illegal Operation detected. Ignoring target {target['courseName']}"
-                )
-                targets.remove(target)
+        except SessionExpiredError:
+            logger.warning(
+                "Session has expired. Retrying..."
+            )
+            session_expired = True
+        except IllegalOperationError:
+            logger.warning(
+                f"Illegal Operation detected. Ignoring target {target['courseName']}"
+            )
+            targets.remove(target)
         except NetworkError:
             # Retry
             logger.warning("Network error detected, retrying...")
