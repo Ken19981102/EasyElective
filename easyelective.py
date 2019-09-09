@@ -144,7 +144,7 @@ def get_courses(session):
                 Course(name, classID, college, max_slots, used_slots, elect_address)
             )
         return courses
-    except ValueError as e:
+    except (ValueError, AttributeError) as e:
         logger.info("Failed to parse course list", stack_info=True)
         raise IllegalOperationError(session_expired=True) from e
 
@@ -256,7 +256,9 @@ def main():
                         targets.remove(target)
         except IllegalOperationError as e:
             if e.session_expired:
-                logger.warning("Illegal Operation detected, session expired")
+                logger.warning(
+                    "Illegal Operation detected, session has expired. Retrying..."
+                )
                 session_expired = True
             else:
                 logger.warning(
