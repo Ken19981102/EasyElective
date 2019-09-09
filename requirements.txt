@@ -5,3 +5,5 @@ simplejson
 sklearn
 tqdm
 pyyaml
+loguru
+beautifulSoup4
