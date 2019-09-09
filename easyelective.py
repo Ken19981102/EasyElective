@@ -151,9 +151,6 @@ def solve_captcha(session):
     request_captcha_url = "http://elective.pku.edu.cn/elective2008/DrawServlet"
     img_bytes = session.get(request_captcha_url).content
 
-    # TODO: If we do not receive an image, raise session expired
-    pass
-
     # Recognize the captcha
     result = recognize_captcha(img_bytes)
 
