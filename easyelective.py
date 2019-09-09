@@ -1,11 +1,14 @@
+import sys
 import logging
 import yaml
 import csv
+import re
 from collections import namedtuple
 from time import sleep
+from urllib.parse import urljoin
 
 import requests
-from requests.exceptions import Timeout
+from bs4 import BeautifulSoup
 
 from captcha import recognize_captcha
 
@@ -16,7 +19,13 @@ class EasyElectiveException(Exception):
     pass
 
 
-class ConnectionError(EasyElectiveException):
+class AuthenticationError(EasyElectiveException):
+    """Wrong studentID or password"""
+
+    pass
+
+
+class NetworkError(EasyElectiveException):
     """Network failure, connection timeout, etc"""
 
     pass
@@ -34,13 +43,15 @@ class IllegalOperationError(EasyElectiveException):
 
 # Data structure for a course
 Course = namedtuple(
-    "Course", ["name", "classID", "teacher", "max_slots", "used_slots", "elect_address"]
+    "Course", ["name", "classID", "college", "max_slots", "used_slots", "elect_address"]
 )
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 
 def get_iaaa_token(appid, username, password, redir):
+    logger.debug("Attempting to get iaaa token")
     url = "https://iaaa.pku.edu.cn/iaaa/oauthlogin.do"
     form = dict(
         appid=appid,
@@ -52,14 +63,18 @@ def get_iaaa_token(appid, username, password, redir):
         redirUrl=redir,
     )
 
-    r = requests.post(url, data=form, timeout=2)
+    r = requests.post(url, data=form, timeout=5)
 
-    token = r.json()["token"]
-    logger.info("Got token from IAAA")
+    try:
+        token = r.json()["token"]
+    except KeyError:
+        raise AuthenticationError("Failed to get IAAA token")
+    logger.debug("Successfully got IAAA token")
     return token
 
 
 def get_elective_session(username, password):
+    logger.debug("Attempting to get elective session")
     session = requests.Session()
 
     # Fake referer and user agent
@@ -78,46 +93,60 @@ def get_elective_session(username, password):
     # Pass IAAA token to elective.pku.edu.cn, and get elective session
     login_url = "http://elective.pku.edu.cn/elective2008/ssoLogin.do"
     try:
-        session.get(login_url, params={"token": token}, timeout=2)
-        logger.info("Successfully got elective session")
+        resp = session.get(login_url, params={"token": token}, timeout=5)
+        if resp.status_code != 200:
+            raise AuthenticationError("Failed to get elective session")
+        logger.debug("Successfully got elective session")
         return session
-    except Timeout as e:
-        raise ConnectionError from e
+    except requests.exceptions.RequestException as e:
+        logger.warning("Network error while attempting to get elective session")
+        raise NetworkError from e
 
 
 def get_courses(session):
-    """Return an list of courses in selection plan"""
-    # Pages for course list. Two is enough for now:)
-    url1 = "http://elective.pku.edu.cn/elective2008/edu/pku/stu/elective/controller/supplement/SupplyCancel.do"
-    url2 = "http://elective.pku.edu.cn/elective2008/edu/pku/stu/elective/controller/supplement/supplement.jsp?netui_pagesize=electableListGrid%3B50&netui_row=electableListGrid%3B50"
+    """Return an list of courses in selection plan
+    Only gets the first page of courses for simplicity.
+    """
+
+    logger.debug("Attempting to get courses")
+    url_supply_cancel = "http://elective.pku.edu.cn/elective2008/edu/pku/stu/elective/controller/supplement/SupplyCancel.do"
+    # page2 = "http://elective.pku.edu.cn/elective2008/edu/pku/stu/elective/controller/supplement/supplement.jsp?netui_pagesize=electableListGrid%3B50&netui_row=electableListGrid%3B50"
 
     courses = []
 
-    for url in url1, url2:
-        try:
-            r = session.get(url, timeout=1)
-            # Parse HTML
-            table = r.html.find("table.datagrid", first=True)
-            items = table.find("tr.datagrid-even,tr.datagrid-odd")
-        except Exception as e:
-            raise IllegalOperationError from e
+    try:
+        resp = session.get(url_supply_cancel, timeout=5)
+    except requests.exceptions.RequestException as e:
+        logger.warning("Network error while trying to get course list")
+        raise NetworkError from e
 
+    try:
+        # Parse HTML
+        soup = BeautifulSoup(resp.text, features="html.parser")
+        table = soup.find("table", class_="datagrid")
+        items = table.find_all("tr", class_=re.compile("datagrid-(even|odd)"))
         for item in items:
-            data = item.find("td.datagrid")
+            data = item.find_all("td", class_="datagrid")
             # Parse course info
             name = data[0].text
-            classID = int(data[5].text)
-            teacher = data[4].text
-            maxSlots, usedSlots = (int(s) for s in data[9].text.split("/"))
-            electAddr = data[10].absolute_links.pop()
+            classID = data[5].text
+            college = data[6].text
+            max_slots, used_slots = (int(s) for s in data[9].text.split("/"))
+            base_url = "http://elective.pku.edu.cn"
+            elect_address = urljoin(base_url, data[10].find("a")["href"])
             courses.append(
-                Course(name, classID, teacher, maxSlots, usedSlots, electAddr)
+                Course(name, classID, college, max_slots, used_slots, elect_address)
             )
-    return courses
+        return courses
+    except ValueError as e:
+        logger.warning("Failed to parse course list", stack_info=True)
+        raise IllegalOperationError(session_expired=True) from e
 
 
-def pass_captcha(session):
+def solve_captcha(session):
     """Request captcha from elective and upload the correct answer"""
+
+    logger.debug("Attempting to solve a captcha")
     # Request a new captcha
     request_captcha_url = "http://elective.pku.edu.cn/elective2008/DrawServlet"
     img_bytes = session.get(request_captcha_url).content
@@ -130,36 +159,36 @@ def pass_captcha(session):
 
     # Upload result to elective
     submit_url = "http://elective.pku.edu.cn/elective2008/edu/pku/stu/elective/controller/supplement/validate.do"
-    resp = session.post(submit_url, data={"validCode": result}, timeout=2)
+    resp = session.post(submit_url, data={"validCode": result}, timeout=5)
 
     # If failed, retry
     try:
         if resp.json()["valid"] != "2":
-            pass_captcha(session)
+            solve_captcha(session)
     except ValueError:
         raise IllegalOperationError(session_expired=True)
 
 
 def elect(session, course):
     """Attempt to elect a course"""
+
     logger.info("Attempting to elect {course.name}".format(course=course))
-    if course.usedSlots < course.maxSlots:
-        # Pass a captcha
-        pass_captcha(session)
+    # Solve a captcha
+    solve_captcha(session)
 
-        url = course.elect_address
-        try:
-            r = session.get(url)
-            msg = r.html.find("#msgTips", first=True).text
-        except KeyError as e:
-            raise IllegalOperationError(session_expired=True) from e
+    try:
+        resp = session.get(course.elect_address)
+        soup = BeautifulSoup(resp.text, features="html.parser")
+        msg = soup.find(id="msgTips").text
+    except (KeyError, AttributeError) as e:
+        raise IllegalOperationError(session_expired=True) from e
 
-        # TODO: detect failure precisely
-        if "成功" in msg:
-            logger.info("Successfully elected {}".format(course.name))
-        else:
-            logger.warning("Failed to elect {}: {}".format(course.name, msg))
-            raise IllegalOperationError
+    # TODO: detect failure precisely
+    if "成功" in msg:
+        logger.info("Successfully elected {}".format(course.name))
+    else:
+        logger.warning("Failed to elect {}: {}".format(course.name, msg))
+        raise IllegalOperationError
 
 
 def main():
@@ -178,9 +207,7 @@ def main():
     # Login into elective
     # TODO: deal with login error
     sess = get_elective_session(username, password)
-
-    # Ignore courses that causes conflicts
-    ignored_courses = []
+    logger.info("Got elective session")
 
     # Check course availability at regular interval
     while targets:
@@ -194,29 +221,22 @@ def main():
                     for course in courses
                     if course.name == target["courseName"]
                     if int(course.classID) == int(target["classID"])
+                    if course.college == target["college"]
                 ]
+
                 # Warn if no course correspond to target
-                logger.warning(
-                    "{} not found in election plan.".format(targets["courseName"])
-                )
-                targets.remove(target)
-                # Filter out ignored courses
-                search_result = [
-                    course
-                    for course in search_result
-                    if not any(
-                        course.name == ignored.name
-                        and course.classID == ignored.classID
-                        for ignored in ignored_courses
+                if not search_result:
+                    logger.warning(
+                        f"{target['courseName']} not found in election plan."
                     )
-                ]
+                    targets.remove(target)
 
                 # Check if course is selectable
                 for course in search_result:
-                    if course.usedSlots < course.maxSlots:
+                    if course.used_slots < course.max_slots:
                         logger.info(
                             "Discovered a electable course: {course.name}, class {course.classID},"
-                            " {course.maxSlots}/{course.usedSlots}".format(
+                            " {course.max_slots}/{course.used_slots}".format(
                                 course=course
                             )
                         )
@@ -224,6 +244,7 @@ def main():
                         targets.remove(target)
         except IllegalOperationError as e:
             if e.session_expired:
+                logger.warning("Illegal Operation detected, session expired")
                 sess = get_elective_session(username, password)
             else:
                 # TODO: clarify what happened
@@ -231,6 +252,7 @@ def main():
         finally:
             # TODO: export sleep interval in config
             sleep(10)
+    logger.info("No more targets available. Exiting...")
 
 
 if __name__ == "__main__":
