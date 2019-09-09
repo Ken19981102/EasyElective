@@ -39,6 +39,7 @@ class IllegalOperationError(EasyElectiveException):
 
     def __init__(self, session_expired=False, course_should_be_ignored=False):
         self.session_expired = session_expired
+        self.course_should_be_ignored = course_should_be_ignored
 
 
 # Data structure for a course
@@ -63,7 +64,10 @@ def get_iaaa_token(appid, username, password, redir):
         redirUrl=redir,
     )
 
-    r = requests.post(url, data=form, timeout=5)
+    try:
+        r = requests.post(url, data=form, timeout=5)
+    except requests.exceptions.RequestException:
+        raise NetworkError
 
     try:
         token = r.json()["token"]
@@ -200,13 +204,21 @@ def main():
         csv_reader = csv.DictReader(courses_file)
         targets = list(csv_reader)
 
-    # Login into elective
-    # TODO: deal with login error
-    sess = get_elective_session(username, password)
-    logger.info("Got elective session")
-
-    # Check course availability at regular interval
+    session_expired = True
+    
     while targets:
+        while session_expired:
+            # Login into elective
+            try:
+                sess = get_elective_session(username, password)
+            except AuthenticationError:
+                logger.error("Authentication error. Please check your student ID and password")
+                sys.exit(1)
+            except NetworkError:
+                # Retry later
+                sleep(10)
+        logger.info("Got elective session")
+
         try:
             courses = get_courses(sess)
             for target in targets:
@@ -238,13 +250,14 @@ def main():
         except IllegalOperationError as e:
             if e.session_expired:
                 logger.warning("Illegal Operation detected, session expired")
-                sess = get_elective_session(username, password)
+                session_expired = True
             else:
                 # TODO: clarify what happened
                 logger.warning("Illegal Operation detected")
-        finally:
-            # TODO: export sleep interval in config
-            sleep(10)
+        except NetworkError:
+            # Retry
+            logger.warning("Network error detected, retrying...")
+        sleep(10)
     logger.info("No more targets available. Exiting...")
 
 
