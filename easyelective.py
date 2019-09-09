@@ -48,7 +48,14 @@ Course = namedtuple(
 )
 
 logger = logging.getLogger(__file__)
-logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(asctime)s: %(message)s",
+    handlers = [
+        logging.StreamHandler(),
+        logging.FileHandler(filename='log.txt'),
+    ],
+)
 
 
 def get_iaaa_token(appid, username, password, redir):
@@ -203,7 +210,7 @@ def main():
         targets = list(csv_reader)
 
     session_expired = True
-    
+
     while targets:
         while session_expired:
             # Login into elective
@@ -211,7 +218,9 @@ def main():
                 sess = get_elective_session(username, password)
                 session_expired = False
             except AuthenticationError:
-                logger.critical("Authentication error. Please check your student ID and password")
+                logger.critical(
+                    "Authentication error. Please check your student ID and password"
+                )
                 sys.exit(1)
             except NetworkError:
                 # Retry later
