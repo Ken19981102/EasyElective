@@ -169,10 +169,9 @@ def solve_captcha(session):
 def elect(session, course):
     """Attempt to elect a course"""
 
-    logger.info("Attempting to elect {course.name}".format(course=course))
+    logger.info(f"Attempting to elect {course.name}")
     # Solve a captcha
     solve_captcha(session)
-
     try:
         resp = session.get(course.elect_address)
         soup = BeautifulSoup(resp.text, features="html.parser")
@@ -182,9 +181,9 @@ def elect(session, course):
 
     # TODO: detect failure precisely
     if "成功" in msg:
-        logger.info("Successfully elected {}".format(course.name))
+        logger.info(f"Successfully elected {course.name}")
     else:
-        logger.warning("Failed to elect {}: {}".format(course.name, msg))
+        logger.warning(f"Failed to elect {course.name}: {msg}")
         raise IllegalOperationError
 
 
@@ -232,10 +231,7 @@ def main():
                 for course in search_result:
                     if course.used_slots < course.max_slots:
                         logger.info(
-                            "Discovered a electable course: {course.name}, class {course.classID},"
-                            " {course.max_slots}/{course.used_slots}".format(
-                                course=course
-                            )
+                            f"Discovered a electable course: {course.name}, class {course.classID}, {course.max_slots}/{course.used_slots}"
                         )
                         elect(sess, course)
                         targets.remove(target)
