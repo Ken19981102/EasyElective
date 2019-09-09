@@ -47,7 +47,7 @@ Course = namedtuple(
     "Course", ["name", "classID", "college", "max_slots", "used_slots", "elect_address"]
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__file__)
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
 
